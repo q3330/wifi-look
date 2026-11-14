@@ -14,8 +14,8 @@ android {
         applicationId "com.wifi.wifilook"
         minSdk 24
         targetSdk 33
-        versionCode 9999
-        versionName "9999"
+        versionCode 101
+        versionName "1.0.1"
     }
 
     signingConfigs {
