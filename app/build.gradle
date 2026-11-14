@@ -1,0 +1,58 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+def keystorePropsFile = rootProject.file('keystore.properties')
+def hasKeystore = keystorePropsFile.exists()
+
+android {
+    namespace 'com.wifi.wifilook'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.wifi.wifilook"
+        minSdk 24
+        targetSdk 33
+        versionCode 9999
+        versionName "9999"
+    }
+
+    signingConfigs {
+        release {
+            if (hasKeystore) {
+                def props = new Properties()
+                keystorePropsFile.withInputStream { props.load(it) }
+                storeFile file(props.getProperty('storeFile', 'release.jks'))
+                storePassword props.getProperty('storePassword', '')
+                keyAlias props.getProperty('keyAlias', '')
+                keyPassword props.getProperty('keyPassword', '')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (hasKeystore) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
