@@ -12,8 +12,11 @@ import java.net.SocketTimeoutException
 object DeviceProtocol {
     const val VIDEO_PORT = 8032
     const val CTRL_PORT = 50000
-    const val CMD_GET_BATTERY = 0x1017
+    const val CMD_GET_PWM = 0x1015
     const val CMD_SET_PWM = 4118
+    const val CMD_GET_BATTERY = 0x1017
+    const val CMD_SET_LEVEL = 4180
+    const val CMD_GET_LEVEL = 0x1055
     const val FORMAT_YUYV = 4
 
     val START_CMD: ByteArray = ByteArray(24).apply {

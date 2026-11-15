@@ -2,10 +2,17 @@ package com.wifi.wifilook.ui
 
 import android.Manifest
 import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.location.LocationManager
 import android.net.ConnectivityManager
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
@@ -30,13 +37,29 @@ class ConnectActivity : Activity() {
     private lateinit var tvIp: TextView
     private lateinit var tvBattery: TextView
     private lateinit var tvHint: TextView
+    private lateinit var tvPrecheckSummary: TextView
+    private lateinit var tvStateBluetooth: TextView
+    private lateinit var tvStateLocation: TextView
+    private lateinit var tvStateWifi: TextView
+    private lateinit var tvPrecheckTip: TextView
+    private lateinit var itemBluetooth: View
+    private lateinit var itemLocation: View
+    private lateinit var itemWifi: View
     private lateinit var progressConnect: ProgressBar
     private lateinit var btnConnect: Button
 
     private lateinit var connector: AutoConnector
     private var connectedIp: String? = null
     private var isConnecting = false
+    private var isPrecheckReady = false
     private var lastBackPressMs = 0L
+    private var precheckReceiverRegistered = false
+
+    private val precheckReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            updatePrecheckStatus()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,10 +70,22 @@ class ConnectActivity : Activity() {
         tvIp = findViewById(R.id.tvIp)
         tvBattery = findViewById(R.id.tvBattery)
         tvHint = findViewById(R.id.tvHint)
+        tvPrecheckSummary = findViewById(R.id.tvPrecheckSummary)
+        tvStateBluetooth = findViewById(R.id.tvStateBluetooth)
+        tvStateLocation = findViewById(R.id.tvStateLocation)
+        tvStateWifi = findViewById(R.id.tvStateWifi)
+        tvPrecheckTip = findViewById(R.id.tvPrecheckTip)
+        itemBluetooth = findViewById(R.id.itemBluetooth)
+        itemLocation = findViewById(R.id.itemLocation)
+        itemWifi = findViewById(R.id.itemWifi)
         progressConnect = findViewById(R.id.progressConnect)
         btnConnect = findViewById(R.id.btnConnect)
 
         connector = AutoConnector(this)
+
+        itemBluetooth.setOnClickListener { openSystemSettings(Settings.ACTION_BLUETOOTH_SETTINGS) }
+        itemLocation.setOnClickListener { openSystemSettings(Settings.ACTION_LOCATION_SOURCE_SETTINGS) }
+        itemWifi.setOnClickListener { openSystemSettings(Settings.ACTION_WIFI_SETTINGS) }
 
         btnConnect.setOnClickListener {
             val ip = connectedIp
@@ -73,6 +108,8 @@ class ConnectActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        updatePrecheckStatus()
+        registerPrecheckReceiver()
         if (!isConnecting) {
             quickProbeCurrentWifi()
         }
@@ -80,6 +117,7 @@ class ConnectActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        unregisterPrecheckReceiver()
         if (isConnecting) {
             connector.stop()
             setConnectingState(false)
@@ -134,12 +172,149 @@ class ConnectActivity : Activity() {
     }
 
     private fun beginConnectFlow() {
+        val missingToggles = ArrayList<String>()
+        if (!isBluetoothEnabled()) missingToggles.add("蓝牙")
+        if (!isLocationEnabled()) missingToggles.add("位置")
+        if (!isWifiEnabled()) missingToggles.add("WLAN")
+        if (missingToggles.isNotEmpty()) {
+            val msg = "请先开启：${missingToggles.joinToString("、")}"
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            updatePrecheckStatus()
+            return
+        }
         val missing = missingPermissions()
         if (missing.isNotEmpty()) {
             requestPermissions(missing.toTypedArray(), REQ_PERMISSIONS)
             return
         }
         startAutoConnect()
+    }
+
+    private fun openSystemSettings(action: String) {
+        try {
+            startActivity(Intent(action))
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun registerPrecheckReceiver() {
+        if (precheckReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(LocationManager.PROVIDERS_CHANGED_ACTION)
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+        }
+        try {
+            registerReceiver(precheckReceiver, filter)
+            precheckReceiverRegistered = true
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun unregisterPrecheckReceiver() {
+        if (!precheckReceiverRegistered) return
+        try {
+            unregisterReceiver(precheckReceiver)
+        } catch (_: Throwable) {
+        }
+        precheckReceiverRegistered = false
+    }
+
+    private fun isBluetoothEnabled(): Boolean {
+        return try {
+            val bm = getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager
+            bm?.adapter?.isEnabled == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun isLocationEnabled(): Boolean {
+        return try {
+            val lm = getSystemService(LOCATION_SERVICE) as? LocationManager ?: return false
+            if (Build.VERSION.SDK_INT >= 28) {
+                lm.isLocationEnabled
+            } else {
+                @Suppress("DEPRECATION")
+                lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                    lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun isWifiEnabled(): Boolean {
+        return try {
+            val wm = applicationContext.getSystemService(WIFI_SERVICE) as? WifiManager
+            wm?.isWifiEnabled == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun updatePrecheckStatus() {
+        val btOn = isBluetoothEnabled()
+        val locOn = isLocationEnabled()
+        val wifiOn = isWifiEnabled()
+
+        applyPrecheckItem(tvStateBluetooth, btOn)
+        applyPrecheckItem(tvStateLocation, locOn)
+        applyPrecheckItem(tvStateWifi, wifiOn)
+
+        val missing = ArrayList<String>()
+        if (!btOn) missing.add("蓝牙")
+        if (!locOn) missing.add("位置")
+        if (!wifiOn) missing.add("WLAN")
+
+        isPrecheckReady = missing.isEmpty()
+        if (isPrecheckReady) {
+            tvPrecheckSummary.text = "全部就绪"
+            tvPrecheckSummary.setTextColor(Color.parseColor("#3FB950"))
+            tvPrecheckTip.text = "蓝牙、位置、WLAN 已开启，可正常连接设备"
+            tvPrecheckTip.setTextColor(Color.parseColor("#8B949E"))
+        } else {
+            tvPrecheckSummary.text = "待开启 ${missing.size} 项"
+            tvPrecheckSummary.setTextColor(Color.parseColor("#E3B341"))
+            tvPrecheckTip.text = "请先开启 ${missing.joinToString("、")}（点击对应项可快速前往设置）"
+            tvPrecheckTip.setTextColor(Color.parseColor("#E3B341"))
+        }
+        updateConnectButtonState()
+    }
+
+    private fun updateConnectButtonState() {
+        when {
+            connectedIp != null -> {
+                btnConnect.isEnabled = true
+                btnConnect.setTextColor(Color.WHITE)
+                btnConnect.alpha = 1.0f
+            }
+            isConnecting -> {
+                btnConnect.isEnabled = false
+                btnConnect.setTextColor(Color.WHITE)
+                btnConnect.alpha = 0.6f
+            }
+            !isPrecheckReady -> {
+                btnConnect.isEnabled = false
+                btnConnect.setTextColor(Color.parseColor("#8B949E"))
+                btnConnect.alpha = 1.0f
+            }
+            else -> {
+                btnConnect.isEnabled = true
+                btnConnect.setTextColor(Color.WHITE)
+                btnConnect.alpha = 1.0f
+            }
+        }
+    }
+
+    private fun applyPrecheckItem(tv: TextView, on: Boolean) {
+        if (on) {
+            tv.text = "已开启"
+            tv.setTextColor(Color.parseColor("#3FB950"))
+        } else {
+            tv.text = "未开启"
+            tv.setTextColor(Color.parseColor("#F85149"))
+        }
     }
 
     private fun missingPermissions(): List<String> {
@@ -203,11 +378,10 @@ class ConnectActivity : Activity() {
     private fun setConnectingState(connecting: Boolean) {
         isConnecting = connecting
         progressConnect.visibility = if (connecting) View.VISIBLE else View.GONE
-        btnConnect.isEnabled = !connecting
-        btnConnect.alpha = if (connecting) 0.6f else 1.0f
         if (connecting) {
             btnConnect.text = "正在连接…"
         }
+        updateConnectButtonState()
     }
 
     private fun showConnected(ssid: String, ip: String, battery: Int?) {
@@ -219,8 +393,7 @@ class ConnectActivity : Activity() {
         tvBattery.text = if (battery != null) "$battery%" else "— —"
         tvHint.text = "设备已就绪，点击下方按钮进入相机画面"
         btnConnect.text = "进入相机画面"
-        btnConnect.isEnabled = true
-        btnConnect.alpha = 1.0f
+        updateConnectButtonState()
     }
 
     private fun showDisconnected() {
@@ -232,9 +405,8 @@ class ConnectActivity : Activity() {
         if (!isConnecting) {
             tvHint.text = "请开启设备电源，点击下方按钮自动连接"
             btnConnect.text = "连接设备"
-            btnConnect.isEnabled = true
-            btnConnect.alpha = 1.0f
         }
+        updateConnectButtonState()
     }
 
     private fun openCamera(ip: String) {

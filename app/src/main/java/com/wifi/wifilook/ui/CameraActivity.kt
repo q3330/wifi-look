@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Rect
@@ -17,7 +19,9 @@ import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.Button
 import android.widget.ImageView
+import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import com.wifi.wifilook.R
 import com.wifi.wifilook.media.MediaGallerySaver
 import com.wifi.wifilook.media.RotationFilter
@@ -29,6 +33,8 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.util.Locale
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -44,6 +50,8 @@ class CameraActivity : Activity() {
     private lateinit var btnFlash: TextView
     private lateinit var btnMirror: TextView
     private lateinit var btnRotate: TextView
+    private lateinit var seekBrightness: SeekBar
+    private lateinit var tvBrightnessVal: TextView
     private lateinit var btnSnap: Button
     private lateinit var btnRec: Button
     private lateinit var recIndicator: View
@@ -74,8 +82,16 @@ class CameraActivity : Activity() {
     @Volatile
     private var pwmSeq = 0
 
+    private val ctrlExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
     @Volatile
     private var flashOn = true
+
+    @Volatile
+    private var videoBrightPct = 50
+
+    @Volatile
+    private var disconnecting = false
 
     @Volatile
     private var mirrorOn = false
@@ -123,6 +139,8 @@ class CameraActivity : Activity() {
         btnFlash = findViewById(R.id.btnFlash)
         btnMirror = findViewById(R.id.btnMirror)
         btnRotate = findViewById(R.id.btnRotate)
+        seekBrightness = findViewById(R.id.seekBrightness)
+        tvBrightnessVal = findViewById(R.id.tvBrightnessVal)
         btnSnap = findViewById(R.id.btnSnap)
         btnRec = findViewById(R.id.btnRec)
         recIndicator = findViewById(R.id.recIndicator)
@@ -143,9 +161,11 @@ class CameraActivity : Activity() {
 
         mirrorOn = cfg.getBoolean("mirror", false)
         rotateOn = cfg.getBoolean("rotate", false)
+        videoBrightPct = cfg.getInt("video_bright", 50).coerceIn(0, 100)
         applyMirrorUi()
         applyRotateUi()
         applyFlashUi()
+        applyVideoBrightness()
 
         recorder = VideoRecorder(
             cacheDir = cacheDir,
@@ -171,6 +191,22 @@ class CameraActivity : Activity() {
             applyFlashUi()
             sendFlashCommand(flashOn)
         }
+        seekBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                videoBrightPct = progress.coerceIn(0, 100)
+                applyVideoBrightness()
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val p = (seekBar?.progress ?: videoBrightPct).coerceIn(0, 100)
+                videoBrightPct = p
+                applyVideoBrightness()
+                cfg.edit().putInt("video_bright", videoBrightPct).apply()
+            }
+        })
         btnMirror.setOnClickListener {
             mirrorOn = !mirrorOn
             cfg.edit().putBoolean("mirror", mirrorOn).apply()
@@ -224,6 +260,7 @@ class CameraActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        ctrlExecutor.shutdownNow()
         latestFrame.set(null)
         preview.setImageBitmap(null)
     }
@@ -235,6 +272,21 @@ class CameraActivity : Activity() {
 
     private fun applyFlashUi() {
         updateToggleStyle(btnFlash, flashOn)
+    }
+
+    private fun applyVideoBrightness() {
+        seekBrightness.progress = videoBrightPct
+        tvBrightnessVal.text = "$videoBrightPct%"
+        val scale = 0.4f + (videoBrightPct / 100f) * 1.2f
+        val matrix = ColorMatrix(
+            floatArrayOf(
+                scale, 0f, 0f, 0f, 0f,
+                0f, scale, 0f, 0f, 0f,
+                0f, 0f, scale, 0f, 0f,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+        preview.colorFilter = ColorMatrixColorFilter(matrix)
     }
 
     private fun applyMirrorUi() {
@@ -310,7 +362,7 @@ class CameraActivity : Activity() {
         val ip = deviceIp ?: return
         val sock = ctrlSock ?: return
         val valInt = if (on) 1 else 0
-        Thread({
+        ctrlExecutor.execute {
             try {
                 val addr = InetAddress.getByName(ip)
                 for (i in 0 until 2) {
@@ -321,7 +373,7 @@ class CameraActivity : Activity() {
                 }
             } catch (_: Throwable) {
             }
-        }, "flash-cmd").start()
+        }
     }
 
     private fun sendFlashOffOnExit() {
@@ -365,12 +417,8 @@ class CameraActivity : Activity() {
             }
             val lost = framesCount > 0L && lastFrameAt > 0L && (now - lastFrameAt > 3000L)
             if (lost) {
-                tvDisconnect.text = "连接中断"
-                tvDisconnect.visibility = View.VISIBLE
-                if (recorder.isRecording) {
-                    recorder.stopAndSave()
-                    updateRecUi()
-                }
+                exitOnDisconnect()
+                return
             } else if (framesCount > 0L) {
                 tvDisconnect.visibility = View.GONE
             }
@@ -432,10 +480,7 @@ class CameraActivity : Activity() {
             val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
             val wifi = DeviceProtocol.pickWifiNetwork(cm)
             if (wifi == null) {
-                runOnUiThread {
-                    tvDisconnect.text = "未连接设备 Wi-Fi"
-                    tvDisconnect.visibility = View.VISIBLE
-                }
+                runOnUiThread { exitOnDisconnect() }
                 return
             }
             activeNetwork = wifi
@@ -541,6 +586,17 @@ class CameraActivity : Activity() {
             }
             ctrlSock = null
         }
+    }
+
+    private fun exitOnDisconnect() {
+        if (disconnecting || isFinishing || isDestroyed) return
+        disconnecting = true
+        if (recorder.isRecording) {
+            recorder.stopAndSave()
+            updateRecUi()
+        }
+        Toast.makeText(this, "设备已断开，已退出相机画面", Toast.LENGTH_SHORT).show()
+        finish()
     }
 
     private fun setupCtrlSocket(wifi: android.net.Network) {
