@@ -493,7 +493,7 @@ class CameraActivity : Activity() {
             activeVideoSock = videoSock
             wifi.bindSocket(videoSock)
             videoSock.soTimeout = 1200
-            videoSock.receiveBufferSize = 1024 * 1024
+            videoSock.receiveBufferSize = 4 * 1024 * 1024
 
             val buf = ByteArray(65536)
             val assembler = FrameAssembler()
@@ -507,7 +507,7 @@ class CameraActivity : Activity() {
             var activeIp: String? = deviceIp
             if (activeIp != null) {
                 setupCtrlSocket(wifi)
-                sendStartCmd(videoSock, activeIp, 2)
+                sendStartCmd(videoSock, activeIp, 11)
                 sendFlashCommand(flashOn)
             }
 
@@ -515,7 +515,7 @@ class CameraActivity : Activity() {
                 val now = System.currentTimeMillis()
                 if (activeIp == null) {
                     for (ip in candidates) {
-                        sendStartCmd(videoSock, ip, 2)
+                        sendStartCmd(videoSock, ip, 11)
                     }
                     try {
                         val pkt = DatagramPacket(buf, buf.size)

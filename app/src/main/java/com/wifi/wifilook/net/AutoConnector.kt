@@ -22,7 +22,7 @@ class AutoConnector(private val context: Context) {
 
     interface Callback {
         fun onProgress(message: String)
-        fun onConnected(ssid: String, deviceIp: String, battery: Int?)
+        fun onConnected(ssid: String, deviceIp: String, battery: DeviceProtocol.BatteryInfo?)
         fun onNeedManualWifi(message: String)
     }
 
@@ -62,7 +62,7 @@ class AutoConnector(private val context: Context) {
                 }
                 val ip = DeviceProtocol.probeDevice(cm, existingWifi, 900)
                 if (ip != null && active) {
-                    val bat = DeviceProtocol.queryBatteryPercent(existingWifi, ip)
+                    val bat = DeviceProtocol.queryBatteryStatus(existingWifi, ip)
                     val ssid = currentSsid()
                     active = false
                     mainHandler.post { callback.onConnected(ssid, ip, bat) }
@@ -124,20 +124,16 @@ class AutoConnector(private val context: Context) {
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 if (!active) return
-                val devName = result.device?.name ?: return
+                val devName = result.device?.name ?: result.scanRecord?.deviceName
+                if (devName.isNullOrBlank()) return
                 val bytes = result.scanRecord?.bytes ?: return
-                val hex = toHex(bytes)
-                val split = hex.split("09ff")
-                if (split.size <= 1 || split[1].length < 16 || hex.length < 13) return
-                val payload = split[1]
-                val headerTag = hex.substring(9, 13)
-                if ("6699" == payload.substring(0, 4) && "201a" == headerTag) {
-                    val bssid = formatMac(payload.substring(4, 16))
-                    stopBleScan()
-                    mainHandler.removeCallbacks(timeoutRunnable)
-                    callback.onProgress("已发现设备 $devName，正在连接热点…")
-                    connectToWifi(devName, bssid, callback)
-                }
+                val payload = findManufacturerData(bytes, MANUFACTURER_PREFIX) ?: return
+                if (payload.size < 6) return
+                val bssid = (0 until 6).joinToString(":") { "%02X".format(payload[it]) }
+                stopBleScan()
+                mainHandler.removeCallbacks(timeoutRunnable)
+                callback.onProgress("已发现设备 $devName，正在连接热点…")
+                connectToWifi(devName, bssid, callback)
             }
 
             override fun onScanFailed(errorCode: Int) {
@@ -192,7 +188,7 @@ class AutoConnector(private val context: Context) {
                     }
                     Thread({
                         val ip = DeviceProtocol.probeDevice(cm, network, 3000)
-                        val bat = if (ip != null) DeviceProtocol.queryBatteryPercent(network, ip) else null
+                        val bat = if (ip != null) DeviceProtocol.queryBatteryStatus(network, ip) else null
                         active = false
                         mainHandler.post {
                             if (ip != null) {
@@ -238,7 +234,7 @@ class AutoConnector(private val context: Context) {
                     if (wifiNet != null) {
                         val ip = DeviceProtocol.probeDevice(cm, wifiNet, 3000)
                         if (ip != null && active) {
-                            val bat = DeviceProtocol.queryBatteryPercent(wifiNet, ip)
+                            val bat = DeviceProtocol.queryBatteryStatus(wifiNet, ip)
                             active = false
                             mainHandler.post { callback.onConnected(ssid, ip, bat) }
                             return@Thread
@@ -256,22 +252,30 @@ class AutoConnector(private val context: Context) {
         }
     }
 
-    private fun toHex(bytes: ByteArray): String {
-        val sb = StringBuilder(bytes.size * 2)
-        for (b in bytes) {
-            val v = b.toInt() and 0xFF
-            if (v < 0x10) sb.append('0')
-            sb.append(Integer.toHexString(v))
+    /**
+     * Walk the BLE scan record LTV structure for manufacturer-specific data (AD type 0xFF)
+     * starting with [prefix] and return the payload bytes after [prefix].
+     */
+    private fun findManufacturerData(record: ByteArray, prefix: ByteArray): ByteArray? {
+        var i = 0
+        while (i < record.size) {
+            val len = record[i].toInt() and 0xFF
+            if (len == 0) return null
+            if (i + len >= record.size) return null
+            val type = record[i + 1].toInt() and 0xFF
+            if (type == 0xFF && len >= 1 + prefix.size) {
+                val payloadStart = i + 2
+                val payloadEnd = i + 1 + len
+                if (prefix.indices.all { record[payloadStart + it] == prefix[it] }) {
+                    return record.copyOfRange(payloadStart + prefix.size, payloadEnd)
+                }
+            }
+            i += len + 1
         }
-        return sb.toString()
+        return null
     }
 
-    private fun formatMac(raw12: String): String {
-        val sb = StringBuilder(17)
-        for (i in 0 until 12 step 2) {
-            if (i > 0) sb.append(':')
-            sb.append(raw12[i]).append(raw12[i + 1])
-        }
-        return sb.toString()
+    companion object {
+        private val MANUFACTURER_PREFIX = byteArrayOf(0x66, 0x99.toByte())
     }
 }

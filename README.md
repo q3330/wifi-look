@@ -51,8 +51,9 @@ Wifi Look/
 
 - **直接安装**：下载仓库根目录的 [wifi-look.apk](./wifi-look.apk) 安装到 Android 7.0（API 24）及以上设备即可使用。
 
-## 开源协议与版权
+## 开源协议、引用与致谢
 
-本项目遵循 [GNU General Public License v3.0 (GPL-3.0)](./LICENSE.txt) 开源协议分发。
+- 本项目遵循 [GNU General Public License v3.0 (GPL-3.0)](./LICENSE.txt) 开源协议分发。
+- 底层支持与致谢 [rbeilvert/otoscope](https://github.com/rbeilvert/otoscope)（同样采用 GPL-3.0 协议）。
 
 Copyright © 2026 q3330

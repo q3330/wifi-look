@@ -173,7 +173,7 @@ class ConnectActivity : Activity() {
         }
         Thread({
             val ip = DeviceProtocol.probeDevice(cm, wifi, 600)
-            val bat = if (ip != null) DeviceProtocol.queryBatteryPercent(wifi, ip) else null
+            val bat = if (ip != null) DeviceProtocol.queryBatteryStatus(wifi, ip) else null
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 if (ip != null) {
@@ -373,7 +373,7 @@ class ConnectActivity : Activity() {
                 tvHint.text = message
             }
 
-            override fun onConnected(ssid: String, deviceIp: String, battery: Int?) {
+            override fun onConnected(ssid: String, deviceIp: String, battery: DeviceProtocol.BatteryInfo?) {
                 if (isFinishing || isDestroyed) return
                 setConnectingState(false)
                 showConnected(ssid, deviceIp, battery)
@@ -398,13 +398,18 @@ class ConnectActivity : Activity() {
         updateConnectButtonState()
     }
 
-    private fun showConnected(ssid: String, ip: String, battery: Int?) {
+    private fun showConnected(ssid: String, ip: String, battery: DeviceProtocol.BatteryInfo?) {
         connectedIp = ip
         tvStatus.text = "已连接"
         tvStatus.setTextColor(Color.parseColor("#3FB950"))
         tvSsid.text = ssid
         tvIp.text = ip
-        tvBattery.text = if (battery != null) "$battery%" else "— —"
+        tvBattery.text = when {
+            battery == null -> "— —"
+            battery.full -> "${battery.percent}%（已充满）"
+            battery.charging -> "${battery.percent}%（充电中）"
+            else -> "${battery.percent}%"
+        }
         tvHint.text = "设备已就绪，点击下方按钮进入相机画面"
         btnConnect.text = "进入相机画面"
         updateConnectButtonState()

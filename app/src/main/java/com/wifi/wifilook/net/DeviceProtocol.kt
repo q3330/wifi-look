@@ -10,6 +10,12 @@ import java.net.InetAddress
 import java.net.SocketTimeoutException
 
 object DeviceProtocol {
+    data class BatteryInfo(
+        val percent: Int,
+        val charging: Boolean,
+        val full: Boolean
+    )
+
     const val VIDEO_PORT = 8032
     const val CTRL_PORT = 50000
     const val CMD_GET_PWM = 0x1015
@@ -129,7 +135,7 @@ object DeviceProtocol {
         }
     }
 
-    fun queryBatteryPercent(network: Network, deviceIp: String): Int? {
+    fun queryBatteryStatus(network: Network, deviceIp: String): BatteryInfo? {
         var sock: DatagramSocket? = null
         return try {
             sock = DatagramSocket(null)
@@ -147,15 +153,26 @@ object DeviceProtocol {
                         readU16(buf, 0) == 0x9999 &&
                         readU16(buf, 2) == CMD_GET_BATTERY
                     ) {
+                        val raw1 = readU32(buf, 8)
+                        val status = raw1 ushr 16
+                        val isPluggedIn = (status and 0x01) != 0
+                        val isFull = isPluggedIn && (status and 0x02) != 0
                         if (pkt.length >= 20) {
                             val raw2 = readU32(buf, 16)
                             if ((raw2 and 0x10000) != 0) {
                                 val pct = raw2 and 0xFFFF
-                                if (pct in 0..100) return pct
+                                if (pct in 0..100) {
+                                    return BatteryInfo(
+                                        percent = pct,
+                                        charging = isPluggedIn && !isFull,
+                                        full = isFull
+                                    )
+                                }
                             }
                         }
-                        val raw1 = readU32(buf, 8)
-                        if (raw1 in 0..100) return raw1
+                        if (raw1 in 0..100) {
+                            return BatteryInfo(percent = raw1, charging = false, full = false)
+                        }
                     }
                 } catch (_: SocketTimeoutException) {
                 }
