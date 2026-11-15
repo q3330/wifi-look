@@ -11,27 +11,11 @@
     android:paddingBottom="28dp">
 
     <ImageView
+        android:id="@+id/ivAppLogo"
         android:layout_width="64dp"
         android:layout_height="64dp"
         android:contentDescription="@string/app_name"
         android:src="@drawable/ic_launcher" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="14dp"
-        android:text="@string/app_name"
-        android:textColor="#FFFFFF"
-        android:textSize="24sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="本地无线可视设备"
-        android:textColor="#8B949E"
-        android:textSize="13sp" />
 
     <!-- 设备信息框 -->
     <LinearLayout

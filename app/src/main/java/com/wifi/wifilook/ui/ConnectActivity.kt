@@ -2,6 +2,7 @@ package com.wifi.wifilook.ui
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
@@ -30,6 +31,8 @@ class ConnectActivity : Activity() {
 
     companion object {
         private const val REQ_PERMISSIONS = 100
+        private const val PREFS_NAME = "wifi_look_prefs"
+        private const val KEY_PRIVACY_ACCEPTED = "privacy_accepted"
     }
 
     private lateinit var tvStatus: TextView
@@ -54,6 +57,7 @@ class ConnectActivity : Activity() {
     private var isPrecheckReady = false
     private var lastBackPressMs = 0L
     private var precheckReceiverRegistered = false
+    private var privacyDialog: AlertDialog? = null
 
     private val precheckReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -83,6 +87,10 @@ class ConnectActivity : Activity() {
 
         connector = AutoConnector(this)
 
+        findViewById<View>(R.id.ivAppLogo).setOnClickListener {
+            showPrivacyPolicyDialog(isReview = isPrivacyAccepted())
+        }
+
         itemBluetooth.setOnClickListener { openSystemSettings(Settings.ACTION_BLUETOOTH_SETTINGS) }
         itemLocation.setOnClickListener { openSystemSettings(Settings.ACTION_LOCATION_SOURCE_SETTINGS) }
         itemWifi.setOnClickListener { openSystemSettings(Settings.ACTION_WIFI_SETTINGS) }
@@ -109,6 +117,10 @@ class ConnectActivity : Activity() {
     override fun onResume() {
         super.onResume()
         updatePrecheckStatus()
+        if (!isPrivacyAccepted()) {
+            showPrivacyPolicyDialog()
+            return
+        }
         registerPrecheckReceiver()
         if (!isConnecting) {
             quickProbeCurrentWifi()
@@ -126,6 +138,8 @@ class ConnectActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        privacyDialog?.dismiss()
+        privacyDialog = null
         connector.stop()
         connector.releaseNetworkCallback()
     }
@@ -407,6 +421,63 @@ class ConnectActivity : Activity() {
             btnConnect.text = "连接设备"
         }
         updateConnectButtonState()
+    }
+
+    private fun isPrivacyAccepted(): Boolean {
+        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getBoolean(KEY_PRIVACY_ACCEPTED, false)
+    }
+
+    private fun showPrivacyPolicyDialog(isReview: Boolean = false) {
+        if (privacyDialog?.isShowing == true) return
+        val message = """
+            欢迎使用 Wifi Look！在您开始使用前，请仔细阅读并同意以下隐私协议与安全提示：
+
+            1. 隐私保护与权限说明
+            本应用为纯本地局域网相机客户端，不连接互联网、不收集或上传任何个人隐私数据。仅在您主动使用时申请以下最小权限：
+            • 网络与 WLAN：用于连接局域网相机热点及本地 UDP 音视频/控制通信。
+            • 蓝牙与位置：仅用于 BLE 搜索附近局域网设备及读取当前 Wi-Fi SSID，不会记录或上传位置信息。
+            • 相册存储（低版本系统）：仅用于保存您主动拍摄的照片与录像。
+
+            2. 安全提示与免责声明
+            • 本应用仅作为局域网无线相机的辅助显示工具，非医疗器械，不用于任何医疗诊断或治疗。
+            • 使用配套硬件时请注意设备温度、电量及操作安全；局域网视频流以本地明文传输，请在私密、可信的环境中连接使用。
+            • 本软件依据 GPL-3.0 开源协议提供（Copyright © 2026 q3330），按“现状”分发且不提供任何明示或暗示的担保。因硬件质量、环境因素或不当操作造成的任何损失，软件作者不承担责任。
+        """.trimIndent()
+
+        val builder = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("隐私协议与安全提示")
+            .setMessage(message)
+
+        if (isReview) {
+            builder.setCancelable(true)
+                .setPositiveButton("我知道了") { dialog, _ ->
+                    dialog.dismiss()
+                    privacyDialog = null
+                }
+        } else {
+            builder.setCancelable(false)
+                .setPositiveButton("同意并继续") { dialog, _ ->
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        .edit()
+                        .putBoolean(KEY_PRIVACY_ACCEPTED, true)
+                        .apply()
+                    dialog.dismiss()
+                    privacyDialog = null
+                    updatePrecheckStatus()
+                    registerPrecheckReceiver()
+                    if (!isConnecting) {
+                        quickProbeCurrentWifi()
+                    }
+                }
+                .setNegativeButton("不同意并退出") { dialog, _ ->
+                    dialog.dismiss()
+                    privacyDialog = null
+                    exitAppCleanly()
+                }
+        }
+
+        privacyDialog = builder.show()
     }
 
     private fun openCamera(ip: String) {
