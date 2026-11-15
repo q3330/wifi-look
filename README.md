@@ -2,6 +2,16 @@
 
 一款基于 **纯 Kotlin + Android 原生 SDK** 开发的极简 Wi-Fi 无线可视设备的客户端。
 
+## 应用截图
+
+<p align="left">
+  <img src="./docs/screenshots/connect_home.png" alt="连接主界面" width="240" />
+  &nbsp;&nbsp;
+  <img src="./docs/screenshots/privacy_dialog.png" alt="隐私协议与安全提示弹窗" width="240" />
+  &nbsp;&nbsp;
+  <img src="./docs/screenshots/camera_live.png" alt="相机实时画面" width="240" />
+</p>
+
 ## 主要特性
 
 - **极简连接页（`ConnectActivity`）**
